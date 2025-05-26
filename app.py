@@ -217,31 +217,20 @@ def main():
         ["📈 Trading Chart", "🤖 AI Assistant", "📊 Data Analysis"])
 
     with tab1:
-        st.header("TSLA Candlestick Chart with TradingView Widget")
+        st.header("TSLA Candlestick Chart with Indicators (Replay)")
 
         # Chart controls
         col1, col2, col3 = st.columns(3)
         with col1:
-            # Cap the max date to today (May 26, 2025)
-            max_date = pd.to_datetime("2025-05-26")
-            min_date = pd.to_datetime(processed_df['date'].min())
             start_date = st.date_input("Start Date",
-                                       value=min_date,
-                                       min_value=min_date,
-                                       max_value=max_date)
+                                       value=pd.to_datetime(
+                                           processed_df['date'].min()))
         with col2:
-            end_date = st.date_input(
-                "End Date",
-                value=min(max_date,
-                          pd.to_datetime(processed_df['date'].max())),
-                min_value=min_date,
-                max_value=max_date)
+            end_date = st.date_input("End Date",
+                                     value=pd.to_datetime(
+                                         processed_df['date'].max()))
         with col3:
             height = st.slider("Chart Height", 400, 800, 600)
-
-        # Debug: Display selected date range
-        st.write(
-            f"Debug: Selected date range - From: {start_date} To: {end_date}")
 
         # Filter data by date range
         date_series = pd.to_datetime(processed_df['date'])
@@ -250,55 +239,195 @@ def main():
         filtered_df = processed_df.loc[mask].copy()
 
         if not filtered_df.empty:
-            # Prepare date range for TradingView widget
-            date_from = start_date.strftime('%Y-%m-%d')
-            date_to = end_date.strftime('%Y-%m-%d')
+            # Step control with a slider
+            max_step = len(filtered_df)
+            step = st.slider("Select Data Step",
+                             1,
+                             max_step,
+                             st.session_state.step,
+                             key="step_slider")
+            st.session_state.step = step
 
-            # Debug: Display dates passed to widget
-            st.write(
-                f"Debug: Dates passed to TradingView widget - From: {date_from} To: {date_to}"
-            )
+            # Prepare data for JavaScript
+            df_subset = filtered_df.iloc[:step].copy()
 
-            # TradingView Widget HTML and JavaScript
+            candlestick_data = []
+            markers = []
+            support_lower_data = []
+            support_upper_data = []
+            resistance_lower_data = []
+            resistance_upper_data = []
+
+            for idx, row in df_subset.iterrows():
+                # Validate OHLC data
+                if pd.isna(row['open']) or pd.isna(row['high']) or pd.isna(
+                        row['low']) or pd.isna(row['close']):
+                    continue
+
+                # Validate date format (must be YYYY-MM-DD)
+                try:
+                    pd.to_datetime(row['date'])
+                    candlestick_data.append({
+                        "time": row['date'],  # YYYY-MM-DD string format
+                        "open": float(row['open']),
+                        "high": float(row['high']),
+                        "low": float(row['low']),
+                        "close": float(row['close'])
+                    })
+                except ValueError:
+                    st.warning(
+                        f"Skipping row {idx}: Invalid date format '{row['date']}'. Expected YYYY-MM-DD."
+                    )
+                    continue
+
+                # Markers for LONG/SHORT/None
+                if row['direction'] == 'LONG':
+                    markers.append({
+                        "time": row['date'],
+                        "position": "belowBar",
+                        "color": "#00FF00",
+                        "shape": "arrowUp",
+                        "text": "LONG",
+                        "size": 2
+                    })
+                elif row['direction'] == 'SHORT':
+                    markers.append({
+                        "time": row['date'],
+                        "position": "aboveBar",
+                        "color": "#FF0000",
+                        "shape": "arrowDown",
+                        "text": "SHORT",
+                        "size": 2
+                    })
+                elif row['direction'] == 'None':
+                    markers.append({
+                        "time": row['date'],
+                        "position": "inBar",
+                        "color": "#FFFF00",
+                        "shape": "circle",
+                        "text": "NEUTRAL",
+                        "size": 1
+                    })
+
+                # Support and Resistance Bands
+                support = dashboard.parse_price_list(row['support'])
+                resistance = dashboard.parse_price_list(row['resistance'])
+
+                if support:
+                    support_lower_data.append({
+                        "time": row['date'],
+                        "value": float(min(support))
+                    })
+                    support_upper_data.append({
+                        "time": row['date'],
+                        "value": float(max(support))
+                    })
+                if resistance:
+                    resistance_lower_data.append({
+                        "time":
+                        row['date'],
+                        "value":
+                        float(min(resistance))
+                    })
+                    resistance_upper_data.append({
+                        "time":
+                        row['date'],
+                        "value":
+                        float(max(resistance))
+                    })
+
+            # HTML and JavaScript to render the chart with Lightweight Charts
             html_code = f"""
-            <!-- TradingView Widget BEGIN -->
-            <div class="tradingview-widget-container" style="height:{height}px;width:100%">
-              <div class="tradingview-widget-container__widget" style="height:calc(100% - 32px);width:100%"></div>
-              <div class="tradingview-widget-copyright">
-                <a href="https://www.tradingview.com/" rel="noopener nofollow" target="_blank">
-                  <span class="blue-text">Track all markets on TradingView</span>
-                </a>
-              </div>
-              <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
-              {{
-                "autosize": true,
-                "symbol": "NASDAQ:TSLA",
-                "interval": "D",
-                "timezone": "Etc/UTC",
-                "theme": "dark",
-                "style": "1",
-                "locale": "en",
-                "allow_symbol_change": true,
-                "calendar": false,
-                "support_host": "https://www.tradingview.com",
-                "range": "daterange",
-                "from": "{date_from}",
-                "to": "{date_to}"
-              }}
-              </script>
-            </div>
-            <!-- TradingView Widget END -->
+            <div id="chart_container" style="width: 100%; height: {height}px;"></div>
+            <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+            <script>
+                const chartContainer = document.getElementById('chart_container');
+                const chart = LightweightCharts.createChart(chartContainer, {{
+                    layout: {{
+                        background: {{ type: 'solid', color: '#131722' }},
+                        textColor: '#D9D9D9',
+                    }},
+                    grid: {{
+                        vertLines: {{ color: 'rgba(42, 46, 57, 0.5)' }},
+                        horzLines: {{ color: 'rgba(42, 46, 57, 0.5)' }},
+                    }},
+                    timeScale: {{
+                        borderColor: '#2A2E39',
+                        timeVisible: true,
+                        secondsVisible: false,
+                    }},
+                    rightPriceScale: {{
+                        borderColor: '#2A2E39',
+                        autoScale: true,
+                        mode: 1,
+                        alignLabels: true,
+                        scaleMargins: {{ top: 0.1, bottom: 0.1 }},
+                    }},
+                    crosshair: {{
+                        mode: 1,
+                        vertLine: {{
+                            color: 'rgba(224, 227, 235, 0.6)',
+                            width: 1,
+                            style: 2,
+                            labelBackgroundColor: '#4C525E',
+                        }},
+                        horzLine: {{
+                            color: 'rgba(224, 227, 235, 0.6)',
+                            width: 1,
+                            style: 2,
+                            labelBackgroundColor: '#4C525E',
+                        }},
+                    }},
+                }});
+
+                const candlestickSeries = chart.addCandlestickSeries({{
+                    upColor: '#26A69A',
+                    downColor: '#EF5350',
+                    borderUpColor: '#26A69A',
+                    borderDownColor: '#EF5350',
+                    wickUpColor: '#26A69A',
+                    wickDownColor: '#EF5350',
+                    priceFormat: {{
+                        type: 'price',
+                        precision: 2,
+                        minMove: 0.01,
+                    }},
+                }});
+                candlestickSeries.setData({json.dumps(candlestick_data)});
+                candlestickSeries.setMarkers({json.dumps(markers)});
+
+                const supportLowerSeries = chart.addLineSeries({{
+                    color: 'rgba(0, 255, 0, 0.5)',
+                    lineWidth: 2,
+                }});
+                supportLowerSeries.setData({json.dumps(support_lower_data)});
+
+                const supportUpperSeries = chart.addLineSeries({{
+                    color: 'rgba(0, 255, 0, 0.5)',
+                    lineWidth: 2,
+                }});
+                supportUpperSeries.setData({json.dumps(support_upper_data)});
+
+                const resistanceLowerSeries = chart.addLineSeries({{
+                    color: 'rgba(255, 0, 0, 0.5)',
+                    lineWidth: 2,
+                }});
+                resistanceLowerSeries.setData({json.dumps(resistance_lower_data)});
+
+                const resistanceUpperSeries = chart.addLineSeries({{
+                    color: 'rgba(255, 0, 0, 0.5)',
+                    lineWidth: 2,
+                }});
+                resistanceUpperSeries.setData({json.dumps(resistance_upper_data)});
+
+                chart.timeScale().fitContent();
+            </script>
             """
-            st.components.v1.html(html_code, height=height + 50)
+            st.components.html(html_code, height=height + 50)
 
-            # Note about missing features
+            # Chart legend
             st.markdown("""
-            **Note:** The TradingView widget does not natively support custom markers (LONG/SHORT/None) or dynamic support/resistance bands as per the original requirements. These features can be added using TradingView's Pine Script or drawing tools, which require additional setup. For now, the chart displays TSLA candlesticks within the selected date range.
-            """)
-
-            # Chart legend (for reference, though markers/bands aren't shown)
-            st.markdown("""
-            **Chart Legend (Intended Features):**
+            **Chart Legend:**
             - 🟢 Green Arrow (↑): LONG signal (below candle)
             - 🔴 Red Arrow (↓): SHORT signal (above candle)  
             - 🟡 Yellow Circle: Neutral/No signal
@@ -306,9 +435,7 @@ def main():
             - 🔴 Red Lines: Resistance levels
             """)
         else:
-            st.warning(
-                "No data available for the selected date range in your dataset."
-            )
+            st.warning("No data available for the selected date range.")
 
     with tab2:
         st.header("🤖 AI Trading Assistant")

@@ -57,6 +57,9 @@ class TradingDashboard:
             for col in numeric_cols:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
 
+            # Convert date to proper format
+            df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
+
             # Drop rows with NaN values in critical columns
             df = df.dropna(subset=numeric_cols)
 
@@ -70,21 +73,25 @@ class TradingDashboard:
 
     def parse_price_list(self, price_str):
         """Parse price list from string format"""
-        if pd.isna(price_str) or price_str == '':
+        if pd.isna(price_str) or price_str == '' or price_str is None:
             return []
         try:
             if isinstance(price_str, str):
                 if price_str.startswith('[') and price_str.endswith(']'):
                     return ast.literal_eval(price_str)
                 else:
-                    return [
+                    # Try to split by comma and convert to float
+                    prices = [
                         float(x.strip()) for x in price_str.split(',')
                         if x.strip()
                     ]
-            elif isinstance(price_str, list):
-                return price_str
-            else:
+                    return prices if prices else []
+            elif isinstance(price_str, (int, float)):
                 return [float(price_str)]
+            elif isinstance(price_str, list):
+                return [float(x) for x in price_str if not pd.isna(x)]
+            else:
+                return []
         except:
             return []
 
@@ -93,79 +100,185 @@ class AIAssistant:
 
     def __init__(self, api_key=None):
         self.api_key = api_key
+        self.model = None
+
         if api_key:
             try:
                 genai.configure(api_key=api_key)
                 self.model = genai.GenerativeModel('gemini-1.5-flash')
-                st.success("Gemini API initialized successfully.")
+                st.success("✅ Gemini API initialized successfully!")
             except Exception as e:
-                st.error(f"Failed to initialize Gemini API: {str(e)}")
+                st.error(f"❌ Failed to initialize Gemini API: {str(e)}")
                 self.model = None
         else:
-            st.error(
-                "No Gemini API key provided. Please set the GEMINI_API_KEY in Replit's secrets to enable chatbot functionality."
+            st.warning(
+                "⚠️ No Gemini API key provided. Set GEMINI_API_KEY in environment variables to enable AI features."
             )
-            self.model = None
 
     def analyze_data(self, df, question):
+        """Analyze data and answer questions"""
         if not self.model:
-            return "Chatbot functionality is unavailable due to missing or invalid Gemini API configuration."
-
-        # Simplified data summary for testing
-        data_summary = f"TSLA stock data has {len(df)} trading days."
-
-        prompt = f"""
-        You are a trading data analyst. Based on the following data summary, answer the question.
-
-        Data Summary: {data_summary}
-
-        Question: {question}
-
-        Provide a concise answer.
-        """
+            return "❌ AI Assistant is unavailable. Please configure the Gemini API key."
 
         try:
-            st.write(f"Debug: Sending prompt to Gemini API: {prompt[:100]}..."
-                     )  # Log first 100 chars of prompt
+            # Prepare comprehensive data summary
+            data_summary = self.prepare_detailed_summary(df)
+
+            prompt = f"""
+            You are an expert financial data analyst specializing in stock market analysis. 
+
+            Based on the following TSLA stock data summary, provide a detailed and accurate answer to the user's question.
+
+            TSLA DATA SUMMARY:
+            {data_summary}
+
+            QUESTION: {question}
+
+            INSTRUCTIONS:
+            - Provide specific numbers and calculations when possible
+            - Be concise but thorough
+            - If the question requires data not available in the summary, clearly state what's missing
+            - Focus on actionable insights
+            - Use bullet points for multiple findings
+
+            ANSWER:
+            """
+
+            # Generate response with error handling
             response = self.model.generate_content(prompt)
-            st.write("Debug: API call completed.")
-            if response and hasattr(response, 'text'):
-                st.write("Debug: Response received from Gemini API.")
+
+            if response and hasattr(response, 'text') and response.text:
                 return response.text
             else:
-                st.write("Debug: No response text received from Gemini API.")
-                return "No response received from the Gemini API."
+                return "❌ No response generated. Please try rephrasing your question."
+
         except Exception as e:
-            st.write(f"Debug: Error in Gemini API call: {str(e)}")
-            return f"Error generating response from Gemini API: {str(e)}"
+            error_msg = str(e)
+            if "SAFETY" in error_msg.upper():
+                return "❌ Content filtered by safety guidelines. Please rephrase your question."
+            elif "QUOTA" in error_msg.upper() or "LIMIT" in error_msg.upper():
+                return "❌ API quota exceeded. Please try again later."
+            else:
+                return f"❌ Error generating response: {error_msg}"
 
-    def prepare_data_summary(self, df):
-        df = df.copy()
-        dates = pd.to_datetime(df['date'])
+    def prepare_detailed_summary(self, df):
+        """Prepare detailed data summary for AI analysis"""
+        try:
+            dates = pd.to_datetime(df['date'])
 
-        summary = f"""
-        TSLA Stock Data Analysis:
-        - Total trading days: {len(df)}
-        - Date range: {dates.min().strftime('%Y-%m-%d')} to {dates.max().strftime('%Y-%m-%d')}
-        - Price range: ${df['low'].min():.2f} - ${df['high'].max():.2f}
-        - Average volume: {df['volume'].mean():,.0f}
+            # Basic statistics
+            total_days = len(df)
+            bullish_days = len(df[df['close'] > df['open']])
+            bearish_days = len(df[df['close'] < df['open']])
 
-        Direction Analysis:
-        - LONG signals: {len(df[df['direction'] == 'LONG'])}
-        - SHORT signals: {len(df[df['direction'] == 'SHORT'])}
-        - Neutral signals: {len(df[df['direction'] == 'None'])}
+            # Price statistics
+            price_stats = {
+                'min_price': df[['open', 'high', 'low', 'close']].min().min(),
+                'max_price': df[['open', 'high', 'low', 'close']].max().max(),
+                'avg_close': df['close'].mean(),
+                'price_std': df['close'].std()
+            }
 
-        Price Movement:
-        - Bullish days (close > open): {len(df[df['close'] > df['open']])}
-        - Bearish days (close < open): {len(df[df['close'] < df['open']])}
-        - Unchanged days: {len(df[df['close'] == df['open']])}
+            # Volume statistics
+            volume_stats = {
+                'avg_volume': df['volume'].mean(),
+                'total_volume': df['volume'].sum(),
+                'volume_std': df['volume'].std()
+            }
 
-        2023 Specific Data:
-        - 2023 trading days: {len(df[dates.dt.year == 2023])}
-        - 2023 bullish days: {len(df[(dates.dt.year == 2023) & (df['close'] > df['open'])])}
-        - 2023 LONG signals: {len(df[(dates.dt.year == 2023) & (df['direction'] == 'LONG')])}
-        """
-        return summary
+            # Direction analysis
+            direction_counts = df['direction'].value_counts().to_dict()
+
+            # Time-based analysis
+            df_with_dates = df.copy()
+            df_with_dates['date'] = dates
+            df_with_dates['year'] = df_with_dates['date'].dt.year
+            df_with_dates['month'] = df_with_dates['date'].dt.month
+            df_with_dates['weekday'] = df_with_dates['date'].dt.day_name()
+
+            # Yearly breakdown
+            yearly_stats = {}
+            for year in df_with_dates['year'].unique():
+                year_data = df_with_dates[df_with_dates['year'] == year]
+                yearly_stats[year] = {
+                    'total_days':
+                    len(year_data),
+                    'bullish_days':
+                    len(year_data[year_data['close'] > year_data['open']]),
+                    'avg_close':
+                    year_data['close'].mean(),
+                    'long_signals':
+                    len(year_data[year_data['direction'] == 'LONG']),
+                    'short_signals':
+                    len(year_data[year_data['direction'] == 'SHORT'])
+                }
+
+            # Volatility calculation
+            df_with_dates['daily_return'] = df_with_dates['close'].pct_change()
+            df_with_dates['volatility'] = (
+                df_with_dates['high'] -
+                df_with_dates['low']) / df_with_dates['close']
+
+            summary = f"""
+TSLA STOCK DATA ANALYSIS SUMMARY:
+
+BASIC STATISTICS:
+- Total trading days: {total_days}
+- Date range: {dates.min().strftime('%Y-%m-%d')} to {dates.max().strftime('%Y-%m-%d')}
+- Bullish days (close > open): {bullish_days} ({bullish_days/total_days*100:.1f}%)
+- Bearish days (close < open): {bearish_days} ({bearish_days/total_days*100:.1f}%)
+
+PRICE ANALYSIS:
+- Price range: ${price_stats['min_price']:.2f} - ${price_stats['max_price']:.2f}
+- Average closing price: ${price_stats['avg_close']:.2f}
+- Price volatility (std): ${price_stats['price_std']:.2f}
+- Average daily volatility: {df_with_dates['volatility'].mean()*100:.2f}%
+
+VOLUME ANALYSIS:
+- Average daily volume: {volume_stats['avg_volume']:,.0f}
+- Total volume: {volume_stats['total_volume']:,.0f}
+- Volume standard deviation: {volume_stats['volume_std']:,.0f}
+
+TRADING SIGNALS:
+- LONG signals: {direction_counts.get('LONG', 0)}
+- SHORT signals: {direction_counts.get('SHORT', 0)}
+- Neutral/No signals: {direction_counts.get('None', 0)}
+
+YEARLY BREAKDOWN:
+"""
+            for year, stats in yearly_stats.items():
+                summary += f"""
+{year}:
+  - Trading days: {stats['total_days']}
+  - Bullish days: {stats['bullish_days']} ({stats['bullish_days']/stats['total_days']*100:.1f}%)
+  - Average close: ${stats['avg_close']:.2f}
+  - LONG signals: {stats['long_signals']}
+  - SHORT signals: {stats['short_signals']}
+"""
+
+            # Monthly performance
+            monthly_performance = df_with_dates.groupby('month').agg({
+                'close':
+                'mean',
+                'volume':
+                'mean',
+                'volatility':
+                'mean'
+            }).round(2)
+
+            summary += f"""
+PERFORMANCE METRICS:
+- Best performing month (avg close): Month {monthly_performance['close'].idxmax()} (${monthly_performance['close'].max():.2f})
+- Highest volume month: Month {monthly_performance['volume'].idxmax()} ({monthly_performance['volume'].max():,.0f})
+- Most volatile month: Month {monthly_performance['volatility'].idxmax()} ({monthly_performance['volatility'].max()*100:.2f}%)
+- Average daily return: {df_with_dates['daily_return'].mean()*100:.2f}%
+- Return volatility: {df_with_dates['daily_return'].std()*100:.2f}%
+"""
+
+            return summary
+
+        except Exception as e:
+            return f"Error preparing data summary: {str(e)}"
 
     def get_template_questions(self):
         return [
@@ -174,16 +287,16 @@ class AIAssistant:
             "How many LONG signals were generated in the dataset?",
             "What was the highest and lowest price recorded?",
             "What's the ratio of bullish to bearish days?",
-            "How many trading signals were generated per month?",
-            "What's the correlation between volume and price movement?",
-            "During which month did TSLA show the most volatility?",
-            "How often do support and resistance levels get tested?",
-            "What's the success rate of LONG vs SHORT signals?",
-            "What was the average daily price range in 2023?",
-            "Which quarter showed the best performance for TSLA?",
-            "How many times did the price break through the resistance band?",
-            "What's the average volume on LONG signal days vs SHORT signal days?",
-            "Which day of the week had the highest average price movement?"
+            "What's the average daily volatility of TSLA?",
+            "Which month showed the best performance?",
+            "What's the success rate of trading signals?",
+            "How does volume correlate with price movements?",
+            "What's the average daily return percentage?",
+            "Which year had the most bullish days?",
+            "What's the total trading volume across all days?",
+            "How many neutral trading days were there?",
+            "What's the price range for each year?",
+            "Which weekday typically has the highest volume?"
         ]
 
 
@@ -197,27 +310,32 @@ def main():
     # Sidebar
     with st.sidebar:
         st.header("📊 Dashboard Controls")
+        st.markdown(
+            "Upload your TSLA CSV file or ensure tsla_data.csv exists in the project directory."
+        )
 
-    # Load data from tsla_data.csv
+    # Load data
     try:
         if st.session_state.data is None:
             st.session_state.data = dashboard.load_data_from_csv()
+
+        if st.session_state.data is None:
+            st.stop()  # Stop execution if no data is loaded
+
     except Exception as e:
-        st.error(str(e))
-        return
+        st.error(f"Error loading data: {str(e)}")
+        st.stop()
 
     # Main content
     df = st.session_state.data
     processed_df = df.copy()
-    processed_df['date'] = pd.to_datetime(
-        processed_df['date']).dt.strftime('%Y-%m-%d')
 
     # Create tabs
     tab1, tab2, tab3 = st.tabs(
         ["📈 Trading Chart", "🤖 AI Assistant", "📊 Data Analysis"])
 
     with tab1:
-        st.header("TSLA Candlestick Chart with Indicators (Replay)")
+        st.header("TSLA Candlestick Chart with Indicators")
 
         # Chart controls
         col1, col2, col3 = st.columns(3)
@@ -239,56 +357,46 @@ def main():
         filtered_df = processed_df.loc[mask].copy()
 
         if not filtered_df.empty:
-            # Step control with a slider
+            # Step control
             max_step = len(filtered_df)
-            step = st.slider("Select Data Step",
+            step = st.slider("Data Points to Show",
                              1,
                              max_step,
-                             st.session_state.step,
+                             min(50, max_step),
                              key="step_slider")
-            st.session_state.step = step
 
-            # Prepare data for JavaScript
+            # Prepare data for chart
             df_subset = filtered_df.iloc[:step].copy()
 
             candlestick_data = []
             markers = []
-            support_lower_data = []
-            support_upper_data = []
-            resistance_lower_data = []
-            resistance_upper_data = []
+            support_data = []
+            resistance_data = []
 
             for idx, row in df_subset.iterrows():
                 # Validate OHLC data
-                if pd.isna(row['open']) or pd.isna(row['high']) or pd.isna(
-                        row['low']) or pd.isna(row['close']):
+                if any(
+                        pd.isna(val) for val in
+                    [row['open'], row['high'], row['low'], row['close']]):
                     continue
 
-                # Validate date format (must be YYYY-MM-DD)
-                try:
-                    pd.to_datetime(row['date'])
-                    candlestick_data.append({
-                        "time": row['date'],  # YYYY-MM-DD string format
-                        "open": float(row['open']),
-                        "high": float(row['high']),
-                        "low": float(row['low']),
-                        "close": float(row['close'])
-                    })
-                except ValueError:
-                    st.warning(
-                        f"Skipping row {idx}: Invalid date format '{row['date']}'. Expected YYYY-MM-DD."
-                    )
-                    continue
+                # Add candlestick data
+                candlestick_data.append({
+                    "time": row['date'],
+                    "open": float(row['open']),
+                    "high": float(row['high']),
+                    "low": float(row['low']),
+                    "close": float(row['close'])
+                })
 
-                # Markers for LONG/SHORT/None
+                # Add trading signals as markers
                 if row['direction'] == 'LONG':
                     markers.append({
                         "time": row['date'],
                         "position": "belowBar",
                         "color": "#00FF00",
                         "shape": "arrowUp",
-                        "text": "LONG",
-                        "size": 2
+                        "text": "LONG"
                     })
                 elif row['direction'] == 'SHORT':
                     markers.append({
@@ -296,240 +404,286 @@ def main():
                         "position": "aboveBar",
                         "color": "#FF0000",
                         "shape": "arrowDown",
-                        "text": "SHORT",
-                        "size": 2
-                    })
-                elif row['direction'] == 'None':
-                    markers.append({
-                        "time": row['date'],
-                        "position": "inBar",
-                        "color": "#FFFF00",
-                        "shape": "circle",
-                        "text": "NEUTRAL",
-                        "size": 1
+                        "text": "SHORT"
                     })
 
-                # Support and Resistance Bands
-                support = dashboard.parse_price_list(row['support'])
-                resistance = dashboard.parse_price_list(row['resistance'])
+                # Add support/resistance levels
+                support_prices = dashboard.parse_price_list(row['support'])
+                resistance_prices = dashboard.parse_price_list(
+                    row['resistance'])
 
-                if support:
-                    support_lower_data.append({
+                for price in support_prices:
+                    support_data.append({
                         "time": row['date'],
-                        "value": float(min(support))
-                    })
-                    support_upper_data.append({
-                        "time": row['date'],
-                        "value": float(max(support))
-                    })
-                if resistance:
-                    resistance_lower_data.append({
-                        "time":
-                        row['date'],
-                        "value":
-                        float(min(resistance))
-                    })
-                    resistance_upper_data.append({
-                        "time":
-                        row['date'],
-                        "value":
-                        float(max(resistance))
+                        "value": float(price)
                     })
 
-            # HTML and JavaScript to render the chart with Lightweight Charts
-            html_code = f"""
+                for price in resistance_prices:
+                    resistance_data.append({
+                        "time": row['date'],
+                        "value": float(price)
+                    })
+
+            # Create the chart HTML
+            chart_html = f"""
             <div id="chart_container" style="width: 100%; height: {height}px;"></div>
             <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
             <script>
                 const chartContainer = document.getElementById('chart_container');
                 const chart = LightweightCharts.createChart(chartContainer, {{
                     layout: {{
-                        background: {{ type: 'solid', color: '#131722' }},
-                        textColor: '#D9D9D9',
+                        background: {{ type: 'solid', color: '#1e1e1e' }},
+                        textColor: '#DDD',
                     }},
                     grid: {{
                         vertLines: {{ color: 'rgba(42, 46, 57, 0.5)' }},
                         horzLines: {{ color: 'rgba(42, 46, 57, 0.5)' }},
                     }},
                     timeScale: {{
-                        borderColor: '#2A2E39',
+                        borderColor: '#485c7b',
                         timeVisible: true,
-                        secondsVisible: false,
                     }},
                     rightPriceScale: {{
-                        borderColor: '#2A2E39',
-                        autoScale: true,
-                        mode: 1,
-                        alignLabels: true,
-                        scaleMargins: {{ top: 0.1, bottom: 0.1 }},
-                    }},
-                    crosshair: {{
-                        mode: 1,
-                        vertLine: {{
-                            color: 'rgba(224, 227, 235, 0.6)',
-                            width: 1,
-                            style: 2,
-                            labelBackgroundColor: '#4C525E',
-                        }},
-                        horzLine: {{
-                            color: 'rgba(224, 227, 235, 0.6)',
-                            width: 1,
-                            style: 2,
-                            labelBackgroundColor: '#4C525E',
-                        }},
+                        borderColor: '#485c7b',
                     }},
                 }});
 
                 const candlestickSeries = chart.addCandlestickSeries({{
-                    upColor: '#26A69A',
-                    downColor: '#EF5350',
-                    borderUpColor: '#26A69A',
-                    borderDownColor: '#EF5350',
-                    wickUpColor: '#26A69A',
-                    wickDownColor: '#EF5350',
-                    priceFormat: {{
-                        type: 'price',
-                        precision: 2,
-                        minMove: 0.01,
-                    }},
+                    upColor: '#26a69a',
+                    downColor: '#ef5350',
+                    borderUpColor: '#26a69a',
+                    borderDownColor: '#ef5350',
+                    wickUpColor: '#26a69a',
+                    wickDownColor: '#ef5350',
                 }});
+
                 candlestickSeries.setData({json.dumps(candlestick_data)});
-                candlestickSeries.setMarkers({json.dumps(markers)});
 
-                const supportLowerSeries = chart.addLineSeries({{
-                    color: 'rgba(0, 255, 0, 0.5)',
-                    lineWidth: 2,
-                }});
-                supportLowerSeries.setData({json.dumps(support_lower_data)});
+                if ({json.dumps(markers)}.length > 0) {{
+                    candlestickSeries.setMarkers({json.dumps(markers)});
+                }}
 
-                const supportUpperSeries = chart.addLineSeries({{
-                    color: 'rgba(0, 255, 0, 0.5)',
-                    lineWidth: 2,
-                }});
-                supportUpperSeries.setData({json.dumps(support_upper_data)});
+                if ({json.dumps(support_data)}.length > 0) {{
+                    const supportSeries = chart.addLineSeries({{
+                        color: 'rgba(0, 255, 0, 0.8)',
+                        lineWidth: 2,
+                        title: 'Support'
+                    }});
+                    supportSeries.setData({json.dumps(support_data)});
+                }}
 
-                const resistanceLowerSeries = chart.addLineSeries({{
-                    color: 'rgba(255, 0, 0, 0.5)',
-                    lineWidth: 2,
-                }});
-                resistanceLowerSeries.setData({json.dumps(resistance_lower_data)});
-
-                const resistanceUpperSeries = chart.addLineSeries({{
-                    color: 'rgba(255, 0, 0, 0.5)',
-                    lineWidth: 2,
-                }});
-                resistanceUpperSeries.setData({json.dumps(resistance_upper_data)});
+                if ({json.dumps(resistance_data)}.length > 0) {{
+                    const resistanceSeries = chart.addLineSeries({{
+                        color: 'rgba(255, 0, 0, 0.8)',
+                        lineWidth: 2,
+                        title: 'Resistance'
+                    }});
+                    resistanceSeries.setData({json.dumps(resistance_data)});
+                }}
 
                 chart.timeScale().fitContent();
             </script>
             """
-            st.components.v1.html(html_code, height=height + 50)
+
+            st.components.html(chart_html, height=height + 50)
 
             # Chart legend
             st.markdown("""
-            **Chart Legend:**
-            - 🟢 Green Arrow (↑): LONG signal (below candle)
-            - 🔴 Red Arrow (↓): SHORT signal (above candle)  
-            - 🟡 Yellow Circle: Neutral/No signal
-            - 🟢 Green Lines: Support levels
-            - 🔴 Red Lines: Resistance levels
+            **📊 Chart Legend:**
+            - 🟢 **Green Candles**: Bullish (Close > Open)
+            - 🔴 **Red Candles**: Bearish (Close < Open)
+            - ⬆️ **Green Arrow**: LONG signal
+            - ⬇️ **Red Arrow**: SHORT signal
+            - 🟢 **Green Line**: Support levels
+            - 🔴 **Red Line**: Resistance levels
             """)
+
+            # Display current data point info
+            if step <= len(df_subset):
+                current_row = df_subset.iloc[step - 1]
+                st.info(f"""
+                **Current Data Point ({step}/{max_step}):**
+                📅 Date: {current_row['date']} | 
+                💰 Close: ${current_row['close']:.2f} | 
+                📊 Volume: {current_row['volume']:,.0f} | 
+                🎯 Signal: {current_row['direction']}
+                """)
         else:
             st.warning("No data available for the selected date range.")
 
     with tab2:
         st.header("🤖 AI Trading Assistant")
 
-        # Fetch Gemini API key from Replit secrets
+        # Get API key
         api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            api_key = st.text_input(
+                "Enter Gemini API Key (optional)",
+                type="password",
+                help="Get your API key from Google AI Studio")
+
         ai_assistant = AIAssistant(api_key)
 
         # Template questions
-        st.subheader("💡 Template Questions")
+        st.subheader("💡 Quick Questions")
         template_questions = ai_assistant.get_template_questions()
 
-        cols = st.columns(2)
+        # Display template questions in columns
+        cols = st.columns(3)
         for i, question in enumerate(template_questions):
-            col = cols[i % 2]
-            if col.button(question, key=f"template_{i}"):
-                with st.spinner("Analyzing data..."):
+            col = cols[i % 3]
+            if col.button(question,
+                          key=f"template_{i}",
+                          use_container_width=True):
+                with st.spinner("🤖 Analyzing data..."):
                     response = ai_assistant.analyze_data(
                         processed_df, question)
                     st.session_state.chat_history.append({
-                        "question": question,
-                        "answer": response
+                        "question":
+                        question,
+                        "answer":
+                        response,
+                        "timestamp":
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     })
                     st.rerun()
 
         # Custom question input
         st.subheader("❓ Ask Your Own Question")
-        custom_question = st.text_input(
-            "Enter your question about the TSLA data:")
+        custom_question = st.text_area(
+            "Enter your question about the TSLA data:",
+            placeholder="e.g., What was the average price in Q2 2023?",
+            height=100)
 
-        if st.button("Ask AI", disabled=not custom_question):
-            with st.spinner("Analyzing data..."):
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            ask_button = st.button("🚀 Ask AI",
+                                   disabled=not custom_question.strip())
+
+        if ask_button and custom_question.strip():
+            with st.spinner("🤖 Generating response..."):
                 response = ai_assistant.analyze_data(processed_df,
                                                      custom_question)
                 st.session_state.chat_history.append({
-                    "question": custom_question,
-                    "answer": response
+                    "question":
+                    custom_question,
+                    "answer":
+                    response,
+                    "timestamp":
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 })
                 st.rerun()
 
         # Chat history
         if st.session_state.chat_history:
             st.subheader("💬 Chat History")
-            for i, chat in enumerate(reversed(st.session_state.chat_history)):
-                with st.expander(f"Q: {chat['question'][:50]}..." if len(
-                        chat['question']) > 50 else f"Q: {chat['question']}"):
-                    st.write("**Question:**", chat['question'])
-                    st.write("**Answer:**", chat['answer'])
 
-            if st.button("Clear Chat History"):
+            # Clear history button
+            if st.button("🗑️ Clear History", type="secondary"):
                 st.session_state.chat_history = []
                 st.rerun()
+
+            # Display chat history (most recent first)
+            for i, chat in enumerate(reversed(st.session_state.chat_history)):
+                with st.expander(f"💭 {chat['question'][:60]}..." if len(
+                        chat['question']) > 60 else f"💭 {chat['question']}",
+                                 expanded=(i == 0)):  # Expand most recent
+                    st.markdown(
+                        f"**🕒 Asked:** {chat.get('timestamp', 'Unknown time')}"
+                    )
+                    st.markdown(f"**❓ Question:** {chat['question']}")
+                    st.markdown(f"**🤖 Answer:** {chat['answer']}")
 
     with tab3:
         st.header("📊 Data Analysis & Statistics")
 
-        # Enhanced statistics
-        col1, col2, col3, col4 = st.columns(4)
+        if processed_df is not None and len(processed_df) > 0:
+            # Key metrics
+            col1, col2, col3, col4 = st.columns(4)
 
-        with col1:
-            st.metric("Total Trading Days", len(processed_df))
-            st.metric(
-                "Bullish Days",
-                len(processed_df[processed_df['close'] >
-                                 processed_df['open']]))
+            bullish_days = len(
+                processed_df[processed_df['close'] > processed_df['open']])
+            bearish_days = len(
+                processed_df[processed_df['close'] < processed_df['open']])
 
-        with col2:
-            st.metric("Average Volume",
-                      f"{processed_df['volume'].mean():,.0f}")
-            st.metric("LONG Signals",
-                      len(processed_df[processed_df['direction'] == 'LONG']))
+            with col1:
+                st.metric("📈 Total Trading Days", len(processed_df))
+                st.metric("🟢 Bullish Days", bullish_days)
 
-        with col3:
-            st.metric(
-                "Price Range",
-                f"${processed_df['low'].min():.2f} - ${df['high'].max():.2f}")
-            st.metric("SHORT Signals",
-                      len(processed_df[processed_df['direction'] == 'SHORT']))
+            with col2:
+                st.metric("📊 Average Volume",
+                          f"{processed_df['volume'].mean():,.0f}")
+                st.metric(
+                    "🎯 LONG Signals",
+                    len(processed_df[processed_df['direction'] == 'LONG']))
 
-        with col4:
-            volatility = ((processed_df['high'] - processed_df['low']) /
-                          processed_df['close'] * 100).mean()
-            st.metric("Avg Daily Volatility", f"{volatility:.2f}%")
-            st.metric("Neutral Signals",
-                      len(processed_df[processed_df['direction'] == 'None']))
-            avg_price_change_short = (processed_df[
-                processed_df['direction'] == 'SHORT']['close'].pct_change() *
-                                      100).mean()
-            st.metric("Avg % Price Change (SHORT)",
-                      f"{avg_price_change_short:.2f}%")
+            with col3:
+                price_min = processed_df[['open', 'high', 'low',
+                                          'close']].min().min()
+                price_max = processed_df[['open', 'high', 'low',
+                                          'close']].max().max()
+                st.metric("💰 Price Range",
+                          f"${price_min:.2f} - ${price_max:.2f}")
+                st.metric(
+                    "🎯 SHORT Signals",
+                    len(processed_df[processed_df['direction'] == 'SHORT']))
 
-        # Data preview
-        st.subheader("📋 Data Preview")
-        st.dataframe(processed_df.head(10), use_container_width=True)
+            with col4:
+                volatility = ((processed_df['high'] - processed_df['low']) /
+                              processed_df['close'] * 100).mean()
+                st.metric("📈 Avg Daily Volatility", f"{volatility:.2f}%")
+                st.metric(
+                    "⚪ Neutral Signals",
+                    len(processed_df[processed_df['direction'] == 'None']))
+
+            # Performance metrics
+            st.subheader("📈 Performance Metrics")
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                bullish_ratio = bullish_days / len(processed_df) * 100
+                st.metric("🟢 Bullish Days %", f"{bullish_ratio:.1f}%")
+
+            with col2:
+                avg_close = processed_df['close'].mean()
+                st.metric("💰 Average Close Price", f"${avg_close:.2f}")
+
+            with col3:
+                total_volume = processed_df['volume'].sum()
+                st.metric("📊 Total Volume", f"{total_volume:,.0f}")
+
+            # Data preview
+            st.subheader("📋 Raw Data Preview")
+
+            # Add data filtering options
+            col1, col2 = st.columns(2)
+            with col1:
+                show_rows = st.selectbox("Rows to display", [10, 25, 50, 100],
+                                         index=0)
+            with col2:
+                filter_direction = st.selectbox(
+                    "Filter by Direction",
+                    ['All'] + list(processed_df['direction'].unique()))
+
+            # Apply filters
+            display_df = processed_df.copy()
+            if filter_direction != 'All':
+                display_df = display_df[display_df['direction'] ==
+                                        filter_direction]
+
+            # Display data
+            st.dataframe(display_df.head(show_rows), use_container_width=True)
+
+            # Download option
+            csv = processed_df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Full Dataset as CSV",
+                data=csv,
+                file_name=
+                f"tsla_data_processed_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv")
+        else:
+            st.error("No data available for analysis.")
 
 
 if __name__ == "__main__":

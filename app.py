@@ -273,7 +273,7 @@ def main():
             </div>
             <!-- TradingView Widget END -->
             """
-            st.components.html(html_code, height=height + 50)
+            st.components.v1.html(html_code, height=height + 50)
 
             # Note about missing features
             st.markdown("""

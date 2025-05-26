@@ -485,7 +485,7 @@ def main():
             </script>
             """
 
-            st.components.html(chart_html, height=height + 50)
+            st.components.v1.html(chart_html, height=height + 50)
 
             # Chart legend
             st.markdown("""

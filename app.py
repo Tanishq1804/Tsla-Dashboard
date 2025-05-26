@@ -222,15 +222,26 @@ def main():
         # Chart controls
         col1, col2, col3 = st.columns(3)
         with col1:
+            # Cap the max date to today (May 26, 2025)
+            max_date = pd.to_datetime("2025-05-26")
+            min_date = pd.to_datetime(processed_df['date'].min())
             start_date = st.date_input("Start Date",
-                                       value=pd.to_datetime(
-                                           processed_df['date'].min()))
+                                       value=min_date,
+                                       min_value=min_date,
+                                       max_value=max_date)
         with col2:
-            end_date = st.date_input("End Date",
-                                     value=pd.to_datetime(
-                                         processed_df['date'].max()))
+            end_date = st.date_input(
+                "End Date",
+                value=min(max_date,
+                          pd.to_datetime(processed_df['date'].max())),
+                min_value=min_date,
+                max_value=max_date)
         with col3:
             height = st.slider("Chart Height", 400, 800, 600)
+
+        # Debug: Display selected date range
+        st.write(
+            f"Debug: Selected date range - From: {start_date} To: {end_date}")
 
         # Filter data by date range
         date_series = pd.to_datetime(processed_df['date'])
@@ -242,6 +253,11 @@ def main():
             # Prepare date range for TradingView widget
             date_from = start_date.strftime('%Y-%m-%d')
             date_to = end_date.strftime('%Y-%m-%d')
+
+            # Debug: Display dates passed to widget
+            st.write(
+                f"Debug: Dates passed to TradingView widget - From: {date_from} To: {date_to}"
+            )
 
             # TradingView Widget HTML and JavaScript
             html_code = f"""
@@ -273,7 +289,7 @@ def main():
             </div>
             <!-- TradingView Widget END -->
             """
-            st.components.v1.html(html_code, height=height + 50)
+            st.components.html(html_code, height=height + 50)
 
             # Note about missing features
             st.markdown("""
@@ -290,13 +306,15 @@ def main():
             - 🔴 Red Lines: Resistance levels
             """)
         else:
-            st.warning("No data available for the selected date range.")
+            st.warning(
+                "No data available for the selected date range in your dataset."
+            )
 
     with tab2:
         st.header("🤖 AI Trading Assistant")
 
         # Fetch Gemini API key from Replit secrets
-        api_key = os.getenv("GOOGLE_GEMINI_API_KEY")
+        api_key = os.getenv("GEMINI_API_KEY")
         ai_assistant = AIAssistant(api_key)
 
         # Template questions

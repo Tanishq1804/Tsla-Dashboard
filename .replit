@@ -26,3 +26,15 @@ externalPort = 80
 [[ports]]
 localPort = 8502
 externalPort = 3000
+
+[workflows]
+runButton = "TSLA Dashboard"
+
+[[workflows.workflow]]
+name = "TSLA Dashboard"
+author = 40278309
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "streamlit run app.py --server.port=8080 --server.address=0.0.0.0"

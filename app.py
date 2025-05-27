@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -77,13 +78,15 @@ class TradingDashboard:
             return []
         try:
             if isinstance(price_str, str):
+                # Clean the string
+                price_str = price_str.strip()
                 if price_str.startswith('[') and price_str.endswith(']'):
                     return ast.literal_eval(price_str)
                 else:
                     # Try to split by comma and convert to float
                     prices = [
                         float(x.strip()) for x in price_str.split(',')
-                        if x.strip()
+                        if x.strip() and x.strip() != 'nan'
                     ]
                     return prices if prices else []
             elif isinstance(price_str, (int, float)):
@@ -102,7 +105,7 @@ class AIAssistant:
         self.api_key = api_key
         self.model = None
 
-        if api_key:
+        if api_key and api_key.strip():
             try:
                 genai.configure(api_key=api_key)
                 self.model = genai.GenerativeModel('gemini-1.5-flash')
@@ -112,7 +115,7 @@ class AIAssistant:
                 self.model = None
         else:
             st.warning(
-                "⚠️ No Gemini API key provided. Set GEMINI_API_KEY in environment variables to enable AI features."
+                "⚠️ No Gemini API key provided. Please enter your API key or set GEMINI_API_KEY in environment variables to enable AI features."
             )
 
     def analyze_data(self, df, question):
@@ -158,6 +161,8 @@ class AIAssistant:
                 return "❌ Content filtered by safety guidelines. Please rephrase your question."
             elif "QUOTA" in error_msg.upper() or "LIMIT" in error_msg.upper():
                 return "❌ API quota exceeded. Please try again later."
+            elif "API_KEY" in error_msg.upper() or "INVALID" in error_msg.upper():
+                return "❌ Invalid API key. Please check your Gemini API key."
             else:
                 return f"❌ Error generating response: {error_msg}"
 
@@ -242,7 +247,7 @@ VOLUME ANALYSIS:
 TRADING SIGNALS:
 - LONG signals: {direction_counts.get('LONG', 0)}
 - SHORT signals: {direction_counts.get('SHORT', 0)}
-- Neutral/No signals: {direction_counts.get('None', 0)}
+- Neutral/No signals: {direction_counts.get('None', 0) + direction_counts.get('', 0)}
 
 YEARLY BREAKDOWN:
 """
@@ -311,16 +316,19 @@ def main():
     with st.sidebar:
         st.header("📊 Dashboard Controls")
         st.markdown(
-            "Upload your TSLA CSV file or ensure tsla_data.csv exists in the project directory."
+            "This dashboard uses tsla_data.csv from the project directory."
         )
 
     # Load data
     try:
         if st.session_state.data is None:
-            st.session_state.data = dashboard.load_data_from_csv()
+            with st.spinner("Loading TSLA data..."):
+                st.session_state.data = dashboard.load_data_from_csv()
+                st.success("✅ Data loaded successfully!")
 
         if st.session_state.data is None:
-            st.stop()  # Stop execution if no data is loaded
+            st.error("❌ Failed to load data. Please check tsla_data.csv file.")
+            st.stop()
 
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
@@ -413,76 +421,103 @@ def main():
                     row['resistance'])
 
                 for price in support_prices:
-                    support_data.append({
-                        "time": row['date'],
-                        "value": float(price)
-                    })
+                    if price and not pd.isna(price):
+                        support_data.append({
+                            "time": row['date'],
+                            "value": float(price)
+                        })
 
                 for price in resistance_prices:
-                    resistance_data.append({
-                        "time": row['date'],
-                        "value": float(price)
-                    })
+                    if price and not pd.isna(price):
+                        resistance_data.append({
+                            "time": row['date'],
+                            "value": float(price)
+                        })
 
-            # Create the chart HTML
+            # Create the chart HTML with proper CDN
             chart_html = f"""
-            <div id="chart_container" style="width: 100%; height: {height}px;"></div>
-            <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
-            <script>
-                const chartContainer = document.getElementById('chart_container');
-                const chart = LightweightCharts.createChart(chartContainer, {{
-                    layout: {{
-                        background: {{ type: 'solid', color: '#1e1e1e' }},
-                        textColor: '#DDD',
-                    }},
-                    grid: {{
-                        vertLines: {{ color: 'rgba(42, 46, 57, 0.5)' }},
-                        horzLines: {{ color: 'rgba(42, 46, 57, 0.5)' }},
-                    }},
-                    timeScale: {{
-                        borderColor: '#485c7b',
-                        timeVisible: true,
-                    }},
-                    rightPriceScale: {{
-                        borderColor: '#485c7b',
-                    }},
-                }});
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+            </head>
+            <body>
+                <div id="chart_container" style="width: 100%; height: {height}px;"></div>
+                <script>
+                    try {{
+                        const chartContainer = document.getElementById('chart_container');
+                        const chart = LightweightCharts.createChart(chartContainer, {{
+                            layout: {{
+                                background: {{ type: 'solid', color: '#1e1e1e' }},
+                                textColor: '#DDD',
+                            }},
+                            grid: {{
+                                vertLines: {{ color: 'rgba(42, 46, 57, 0.5)' }},
+                                horzLines: {{ color: 'rgba(42, 46, 57, 0.5)' }},
+                            }},
+                            timeScale: {{
+                                borderColor: '#485c7b',
+                                timeVisible: true,
+                            }},
+                            rightPriceScale: {{
+                                borderColor: '#485c7b',
+                            }},
+                            width: chartContainer.clientWidth,
+                            height: {height}
+                        }});
 
-                const candlestickSeries = chart.addCandlestickSeries({{
-                    upColor: '#26a69a',
-                    downColor: '#ef5350',
-                    borderUpColor: '#26a69a',
-                    borderDownColor: '#ef5350',
-                    wickUpColor: '#26a69a',
-                    wickDownColor: '#ef5350',
-                }});
+                        const candlestickSeries = chart.addCandlestickSeries({{
+                            upColor: '#26a69a',
+                            downColor: '#ef5350',
+                            borderUpColor: '#26a69a',
+                            borderDownColor: '#ef5350',
+                            wickUpColor: '#26a69a',
+                            wickDownColor: '#ef5350',
+                        }});
 
-                candlestickSeries.setData({json.dumps(candlestick_data)});
+                        const candlestickData = {json.dumps(candlestick_data)};
+                        candlestickSeries.setData(candlestickData);
 
-                if ({json.dumps(markers)}.length > 0) {{
-                    candlestickSeries.setMarkers({json.dumps(markers)});
-                }}
+                        const markers = {json.dumps(markers)};
+                        if (markers.length > 0) {{
+                            candlestickSeries.setMarkers(markers);
+                        }}
 
-                if ({json.dumps(support_data)}.length > 0) {{
-                    const supportSeries = chart.addLineSeries({{
-                        color: 'rgba(0, 255, 0, 0.8)',
-                        lineWidth: 2,
-                        title: 'Support'
-                    }});
-                    supportSeries.setData({json.dumps(support_data)});
-                }}
+                        const supportData = {json.dumps(support_data)};
+                        if (supportData.length > 0) {{
+                            const supportSeries = chart.addLineSeries({{
+                                color: 'rgba(0, 255, 0, 0.8)',
+                                lineWidth: 2,
+                                title: 'Support'
+                            }});
+                            supportSeries.setData(supportData);
+                        }}
 
-                if ({json.dumps(resistance_data)}.length > 0) {{
-                    const resistanceSeries = chart.addLineSeries({{
-                        color: 'rgba(255, 0, 0, 0.8)',
-                        lineWidth: 2,
-                        title: 'Resistance'
-                    }});
-                    resistanceSeries.setData({json.dumps(resistance_data)});
-                }}
+                        const resistanceData = {json.dumps(resistance_data)};
+                        if (resistanceData.length > 0) {{
+                            const resistanceSeries = chart.addLineSeries({{
+                                color: 'rgba(255, 0, 0, 0.8)',
+                                lineWidth: 2,
+                                title: 'Resistance'
+                            }});
+                            resistanceSeries.setData(resistanceData);
+                        }}
 
-                chart.timeScale().fitContent();
-            </script>
+                        chart.timeScale().fitContent();
+                        
+                        // Handle window resize
+                        window.addEventListener('resize', () => {{
+                            chart.resize(chartContainer.clientWidth, {height});
+                        }});
+                        
+                        console.log('Chart loaded successfully with', candlestickData.length, 'data points');
+                    }} catch (error) {{
+                        console.error('Chart loading error:', error);
+                        document.getElementById('chart_container').innerHTML = '<div style="padding: 20px; color: red;">Error loading chart: ' + error.message + '</div>';
+                    }}
+                </script>
+            </body>
+            </html>
             """
 
             st.components.v1.html(chart_html, height=height + 50)
@@ -518,9 +553,10 @@ def main():
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             api_key = st.text_input(
-                "Enter Gemini API Key (optional)",
+                "Enter Gemini API Key",
                 type="password",
-                help="Get your API key from Google AI Studio")
+                help="Get your API key from Google AI Studio: https://makersuite.google.com/app/apikey",
+                placeholder="Enter your Gemini API key here...")
 
         ai_assistant = AIAssistant(api_key)
 
@@ -535,18 +571,21 @@ def main():
             if col.button(question,
                           key=f"template_{i}",
                           use_container_width=True):
-                with st.spinner("🤖 Analyzing data..."):
-                    response = ai_assistant.analyze_data(
-                        processed_df, question)
-                    st.session_state.chat_history.append({
-                        "question":
-                        question,
-                        "answer":
-                        response,
-                        "timestamp":
-                        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    })
-                    st.rerun()
+                if not ai_assistant.model:
+                    st.error("❌ Please enter a valid Gemini API key first.")
+                else:
+                    with st.spinner("🤖 Analyzing data..."):
+                        response = ai_assistant.analyze_data(
+                            processed_df, question)
+                        st.session_state.chat_history.append({
+                            "question":
+                            question,
+                            "answer":
+                            response,
+                            "timestamp":
+                            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        })
+                        st.rerun()
 
         # Custom question input
         st.subheader("❓ Ask Your Own Question")
@@ -561,18 +600,21 @@ def main():
                                    disabled=not custom_question.strip())
 
         if ask_button and custom_question.strip():
-            with st.spinner("🤖 Generating response..."):
-                response = ai_assistant.analyze_data(processed_df,
-                                                     custom_question)
-                st.session_state.chat_history.append({
-                    "question":
-                    custom_question,
-                    "answer":
-                    response,
-                    "timestamp":
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                })
-                st.rerun()
+            if not ai_assistant.model:
+                st.error("❌ Please enter a valid Gemini API key first.")
+            else:
+                with st.spinner("🤖 Generating response..."):
+                    response = ai_assistant.analyze_data(processed_df,
+                                                         custom_question)
+                    st.session_state.chat_history.append({
+                        "question":
+                        custom_question,
+                        "answer":
+                        response,
+                        "timestamp":
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    })
+                    st.rerun()
 
         # Chat history
         if st.session_state.chat_history:
@@ -632,9 +674,12 @@ def main():
                 volatility = ((processed_df['high'] - processed_df['low']) /
                               processed_df['close'] * 100).mean()
                 st.metric("📈 Avg Daily Volatility", f"{volatility:.2f}%")
-                st.metric(
-                    "⚪ Neutral Signals",
-                    len(processed_df[processed_df['direction'] == 'None']))
+                neutral_count = len(processed_df[
+                    (processed_df['direction'].isna()) | 
+                    (processed_df['direction'] == '') | 
+                    (processed_df['direction'] == 'None')
+                ])
+                st.metric("⚪ Neutral Signals", neutral_count)
 
             # Performance metrics
             st.subheader("📈 Performance Metrics")
@@ -663,7 +708,7 @@ def main():
             with col2:
                 filter_direction = st.selectbox(
                     "Filter by Direction",
-                    ['All'] + list(processed_df['direction'].unique()))
+                    ['All'] + list(processed_df['direction'].dropna().unique()))
 
             # Apply filters
             display_df = processed_df.copy()

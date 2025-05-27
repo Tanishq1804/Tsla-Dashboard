@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -161,7 +160,8 @@ class AIAssistant:
                 return "❌ Content filtered by safety guidelines. Please rephrase your question."
             elif "QUOTA" in error_msg.upper() or "LIMIT" in error_msg.upper():
                 return "❌ API quota exceeded. Please try again later."
-            elif "API_KEY" in error_msg.upper() or "INVALID" in error_msg.upper():
+            elif "API_KEY" in error_msg.upper(
+            ) or "INVALID" in error_msg.upper():
                 return "❌ Invalid API key. Please check your Gemini API key."
             else:
                 return f"❌ Error generating response: {error_msg}"
@@ -316,8 +316,7 @@ def main():
     with st.sidebar:
         st.header("📊 Dashboard Controls")
         st.markdown(
-            "This dashboard uses tsla_data.csv from the project directory."
-        )
+            "This dashboard uses tsla_data.csv from the project directory.")
 
     # Load data
     try:
@@ -550,12 +549,13 @@ def main():
         st.header("🤖 AI Trading Assistant")
 
         # Get API key
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = os.getenv("GOOGLE_GEMINI_API_KEY")
         if not api_key:
             api_key = st.text_input(
                 "Enter Gemini API Key",
                 type="password",
-                help="Get your API key from Google AI Studio: https://makersuite.google.com/app/apikey",
+                help=
+                "Get your API key from Google AI Studio: https://makersuite.google.com/app/apikey",
                 placeholder="Enter your Gemini API key here...")
 
         ai_assistant = AIAssistant(api_key)
@@ -604,8 +604,8 @@ def main():
                 st.error("❌ Please enter a valid Gemini API key first.")
             else:
                 with st.spinner("🤖 Generating response..."):
-                    response = ai_assistant.analyze_data(processed_df,
-                                                         custom_question)
+                    response = ai_assistant.analyze_data(
+                        processed_df, custom_question)
                     st.session_state.chat_history.append({
                         "question":
                         custom_question,
@@ -674,11 +674,10 @@ def main():
                 volatility = ((processed_df['high'] - processed_df['low']) /
                               processed_df['close'] * 100).mean()
                 st.metric("📈 Avg Daily Volatility", f"{volatility:.2f}%")
-                neutral_count = len(processed_df[
-                    (processed_df['direction'].isna()) | 
-                    (processed_df['direction'] == '') | 
-                    (processed_df['direction'] == 'None')
-                ])
+                neutral_count = len(
+                    processed_df[(processed_df['direction'].isna()) |
+                                 (processed_df['direction'] == '') |
+                                 (processed_df['direction'] == 'None')])
                 st.metric("⚪ Neutral Signals", neutral_count)
 
             # Performance metrics
@@ -707,8 +706,8 @@ def main():
                                          index=0)
             with col2:
                 filter_direction = st.selectbox(
-                    "Filter by Direction",
-                    ['All'] + list(processed_df['direction'].dropna().unique()))
+                    "Filter by Direction", ['All'] +
+                    list(processed_df['direction'].dropna().unique()))
 
             # Apply filters
             display_df = processed_df.copy()

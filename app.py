@@ -618,8 +618,11 @@ def main():
     with tab2:
         st.header("🤖 AI Trading Assistant")
 
-        # Get API key
-        api_key = os.getenv("GOOGLE_GEMINI_API_KEY")
+        # Get API key - check multiple environment variable names
+        api_key = (os.getenv("GOOGLE_GEMINI_API_KEY") or 
+                  os.getenv("GEMINI_API_KEY") or 
+                  os.getenv("GOOGLE_API_KEY"))
+        
         if not api_key:
             api_key = st.text_input(
                 "Enter Gemini API Key",

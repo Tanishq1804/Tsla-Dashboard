@@ -433,87 +433,157 @@ def main():
                             "value": float(price)
                         })
 
-            # Create the chart HTML with proper CDN
+            # Create the chart HTML with multiple CDN fallbacks
             chart_html = f"""
             <!DOCTYPE html>
             <html>
             <head>
-                <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
             </head>
             <body>
-                <div id="chart_container" style="width: 100%; height: {height}px;"></div>
+                <div id="chart_container" style="width: 100%; height: {height}px; background: #1e1e1e;"></div>
+                <div id="loading_message" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-family: Arial;">Loading chart...</div>
+                
                 <script>
-                    try {{
-                        const chartContainer = document.getElementById('chart_container');
-                        const chart = LightweightCharts.createChart(chartContainer, {{
-                            layout: {{
-                                background: {{ type: 'solid', color: '#1e1e1e' }},
-                                textColor: '#DDD',
-                            }},
-                            grid: {{
-                                vertLines: {{ color: 'rgba(42, 46, 57, 0.5)' }},
-                                horzLines: {{ color: 'rgba(42, 46, 57, 0.5)' }},
-                            }},
-                            timeScale: {{
-                                borderColor: '#485c7b',
-                                timeVisible: true,
-                            }},
-                            rightPriceScale: {{
-                                borderColor: '#485c7b',
-                            }},
-                            width: chartContainer.clientWidth,
-                            height: {height}
-                        }});
-
-                        const candlestickSeries = chart.addCandlestickSeries({{
-                            upColor: '#26a69a',
-                            downColor: '#ef5350',
-                            borderUpColor: '#26a69a',
-                            borderDownColor: '#ef5350',
-                            wickUpColor: '#26a69a',
-                            wickDownColor: '#ef5350',
-                        }});
-
-                        const candlestickData = {json.dumps(candlestick_data)};
-                        candlestickSeries.setData(candlestickData);
-
-                        const markers = {json.dumps(markers)};
-                        if (markers.length > 0) {{
-                            candlestickSeries.setMarkers(markers);
-                        }}
-
-                        const supportData = {json.dumps(support_data)};
-                        if (supportData.length > 0) {{
-                            const supportSeries = chart.addLineSeries({{
-                                color: 'rgba(0, 255, 0, 0.8)',
-                                lineWidth: 2,
-                                title: 'Support'
-                            }});
-                            supportSeries.setData(supportData);
-                        }}
-
-                        const resistanceData = {json.dumps(resistance_data)};
-                        if (resistanceData.length > 0) {{
-                            const resistanceSeries = chart.addLineSeries({{
-                                color: 'rgba(255, 0, 0, 0.8)',
-                                lineWidth: 2,
-                                title: 'Resistance'
-                            }});
-                            resistanceSeries.setData(resistanceData);
-                        }}
-
-                        chart.timeScale().fitContent();
+                    // Function to load chart with fallback CDNs
+                    function loadChartScript() {{
+                        const cdnUrls = [
+                            'https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js',
+                            'https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js',
+                            'https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js'
+                        ];
                         
-                        // Handle window resize
-                        window.addEventListener('resize', () => {{
-                            chart.resize(chartContainer.clientWidth, {height});
-                        }});
+                        let currentCdn = 0;
                         
-                        console.log('Chart loaded successfully with', candlestickData.length, 'data points');
-                    }} catch (error) {{
-                        console.error('Chart loading error:', error);
-                        document.getElementById('chart_container').innerHTML = '<div style="padding: 20px; color: red;">Error loading chart: ' + error.message + '</div>';
+                        function tryLoadScript() {{
+                            const script = document.createElement('script');
+                            script.src = cdnUrls[currentCdn];
+                            
+                            script.onload = function() {{
+                                console.log('LightweightCharts loaded from:', cdnUrls[currentCdn]);
+                                initializeChart();
+                            }};
+                            
+                            script.onerror = function() {{
+                                currentCdn++;
+                                if (currentCdn < cdnUrls.length) {{
+                                    console.warn('Failed to load from:', cdnUrls[currentCdn - 1], 'Trying next CDN...');
+                                    tryLoadScript();
+                                }} else {{
+                                    console.error('Failed to load LightweightCharts from all CDNs');
+                                    document.getElementById('chart_container').innerHTML = '<div style="padding: 20px; color: red; text-align: center;">Failed to load chart library. Please refresh the page.</div>';
+                                }}
+                            }};
+                            
+                            document.head.appendChild(script);
+                        }}
+                        
+                        tryLoadScript();
                     }}
+                    
+                    function initializeChart() {{
+                        try {{
+                            document.getElementById('loading_message').style.display = 'none';
+                            
+                            // Check if LightweightCharts is available
+                            if (typeof LightweightCharts === 'undefined') {{
+                                throw new Error('LightweightCharts is not defined');
+                            }}
+                            
+                            const chartContainer = document.getElementById('chart_container');
+                            
+                            const chart = LightweightCharts.createChart(chartContainer, {{
+                                width: chartContainer.clientWidth,
+                                height: {height},
+                                layout: {{
+                                    background: {{ type: 'solid', color: '#1e1e1e' }},
+                                    textColor: '#DDD',
+                                }},
+                                grid: {{
+                                    vertLines: {{ color: 'rgba(42, 46, 57, 0.5)' }},
+                                    horzLines: {{ color: 'rgba(42, 46, 57, 0.5)' }},
+                                }},
+                                timeScale: {{
+                                    borderColor: '#485c7b',
+                                    timeVisible: true,
+                                }},
+                                rightPriceScale: {{
+                                    borderColor: '#485c7b',
+                                }},
+                                crosshair: {{
+                                    mode: LightweightCharts.CrosshairMode.Normal,
+                                }}
+                            }});
+
+                            const candlestickSeries = chart.addCandlestickSeries({{
+                                upColor: '#26a69a',
+                                downColor: '#ef5350',
+                                borderUpColor: '#26a69a',
+                                borderDownColor: '#ef5350',
+                                wickUpColor: '#26a69a',
+                                wickDownColor: '#ef5350',
+                            }});
+
+                            const candlestickData = {json.dumps(candlestick_data)};
+                            if (candlestickData && candlestickData.length > 0) {{
+                                candlestickSeries.setData(candlestickData);
+                                console.log('Candlestick data loaded:', candlestickData.length, 'points');
+                            }}
+
+                            const markers = {json.dumps(markers)};
+                            if (markers && markers.length > 0) {{
+                                candlestickSeries.setMarkers(markers);
+                                console.log('Markers loaded:', markers.length, 'signals');
+                            }}
+
+                            const supportData = {json.dumps(support_data)};
+                            if (supportData && supportData.length > 0) {{
+                                const supportSeries = chart.addLineSeries({{
+                                    color: '#00ff88',
+                                    lineWidth: 2,
+                                    title: 'Support',
+                                    lineStyle: LightweightCharts.LineStyle.Dotted,
+                                }});
+                                supportSeries.setData(supportData);
+                                console.log('Support levels loaded:', supportData.length, 'points');
+                            }}
+
+                            const resistanceData = {json.dumps(resistance_data)};
+                            if (resistanceData && resistanceData.length > 0) {{
+                                const resistanceSeries = chart.addLineSeries({{
+                                    color: '#ff4976',
+                                    lineWidth: 2,
+                                    title: 'Resistance',
+                                    lineStyle: LightweightCharts.LineStyle.Dotted,
+                                }});
+                                resistanceSeries.setData(resistanceData);
+                                console.log('Resistance levels loaded:', resistanceData.length, 'points');
+                            }}
+
+                            // Fit content and handle resize
+                            chart.timeScale().fitContent();
+                            
+                            window.addEventListener('resize', () => {{
+                                chart.applyOptions({{
+                                    width: chartContainer.clientWidth,
+                                    height: {height}
+                                }});
+                            }});
+                            
+                            console.log('✅ Chart initialized successfully!');
+                            
+                        }} catch (error) {{
+                            console.error('❌ Chart initialization error:', error);
+                            document.getElementById('chart_container').innerHTML = 
+                                '<div style="padding: 20px; color: red; text-align: center; font-family: Arial;">' +
+                                'Chart Error: ' + error.message + 
+                                '<br><small>Please refresh the page to retry.</small></div>';
+                        }}
+                    }}
+                    
+                    // Start loading the chart
+                    loadChartScript();
                 </script>
             </body>
             </html>

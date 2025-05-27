@@ -621,7 +621,8 @@ def main():
         # Get API key - check multiple environment variable names
         api_key = (os.getenv("GOOGLE_GEMINI_API_KEY") or 
                   os.getenv("GEMINI_API_KEY") or 
-                  os.getenv("GOOGLE_API_KEY"))
+                  os.getenv("GOOGLE_API_KEY") or
+                  os.getenv("GOOGLEGEMINIKEY"))
         
         if not api_key:
             api_key = st.text_input(
